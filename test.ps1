@@ -15,4 +15,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Board tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Graph test compilation failed' }
 & (Join-Path $output 'graph_tests.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Graph tests failed' }
-Write-Host 'Board and graph tests passed.'
+& $compiler -std=c++17 -Wall -Wextra -pedantic -O2 `
+    (Join-Path $PSScriptRoot 'tests\graph_layout_tests.cpp') (Join-Path $PSScriptRoot 'board.cpp') `
+    (Join-Path $PSScriptRoot 'graph.cpp') (Join-Path $PSScriptRoot 'graph_layout.cpp') `
+    -o (Join-Path $output 'graph_layout_tests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Layout test compilation failed' }
+& (Join-Path $output 'graph_layout_tests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Layout tests failed' }
+Write-Host 'Board, graph and layout tests passed.'

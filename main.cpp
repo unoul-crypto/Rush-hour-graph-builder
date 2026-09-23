@@ -179,6 +179,10 @@ int main() {
         } else {
         DrawText("RUSH HOUR  /  BOARD EDITOR", 48, 36, 30, RAYWHITE);
         DrawText("Create a starting position and build its state graph", 48, 79, 20, muted);
+        if (button({static_cast<float>(panelX), 72, 300, 40},
+                   graphView.mode == LayoutMode::FewerCrossings ? "Layout: fewer crossings" : "Layout: original")) {
+            graphView.mode = graphView.mode == LayoutMode::FewerCrossings ? LayoutMode::Original : LayoutMode::FewerCrossings;
+        }
         drawBoard(editor);
 
         DrawRectangle(panelX - 19, 130, 342, 642, panel);
@@ -219,7 +223,7 @@ int main() {
         }
         if (button({static_cast<float>(panelX), 713, 300, 45}, "Build graph")) {
             graph = std::make_unique<StateGraph>(editor.board);
-            graphView = GraphView{};
+            graphView.resetForGraph();
         }
 
         DrawText("Left click: add/select     Right click: remove", 48, 749, 18, muted);

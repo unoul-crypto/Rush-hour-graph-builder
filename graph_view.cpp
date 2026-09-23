@@ -13,7 +13,7 @@ const Color muted{158, 174, 195, 255};
 const Color accent{85, 174, 230, 255};
 const Color targetColor{233, 103, 94, 255};
 
-Vector2 nodePosition(const GraphNode& node) {
+Vector2 originalPosition(const GraphNode& node) {
     const int rank = node.layerIndex;
     const int signedRank = rank == 0 ? 0 : (rank % 2 ? (rank + 1) / 2 : -rank / 2);
     return {static_cast<float>(node.depth * 185), static_cast<float>(signedRank * 66)};
@@ -63,7 +63,30 @@ void drawTooltip(const StateGraph& graph, int nodeId, Vector2 mouse) {
 }
 } // namespace
 
+void GraphView::resetForGraph() {
+    pan = {135, 410};
+    zoom = 1.0f;
+    positions_.clear();
+    lastNodeCount_ = 0;
+    lastEdgeCount_ = 0;
+    lastUpdate_ = 0;
+}
+
+Vector2 GraphView::pointFor(const StateGraph& graph, std::size_t node) const {
+    if (node < positions_.size()) return {positions_[node].x, positions_[node].y};
+    return originalPosition(graph.nodes()[node]);
+}
+
 bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
+    const bool changed = lastNodeCount_ != graph.nodes().size() || lastEdgeCount_ != graph.edges().size();
+    if (positions_.empty() || mode != computedMode_ ||
+        (changed && (graph.complete() || GetTime() - lastUpdate_ > 0.3))) {
+        positions_ = buildLayout(graph, mode);
+        computedMode_ = mode;
+        lastNodeCount_ = graph.nodes().size();
+        lastEdgeCount_ = graph.edges().size();
+        lastUpdate_ = GetTime();
+    }
     const Rectangle area{0, graphTop, width, graphBottom - graphTop};
     const bool overGraph = CheckCollisionPointRec(mouse, area);
     if (overGraph) {
@@ -86,8 +109,8 @@ bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
 
     DrawRectangleRec(area, Color{22, 31, 44, 255});
     for (const GraphEdge& edge : graph.edges()) {
-        const Vector2 a = nodePosition(graph.nodes()[edge.from]);
-        const Vector2 b = nodePosition(graph.nodes()[edge.to]);
+        const Vector2 a = pointFor(graph, edge.from);
+        const Vector2 b = pointFor(graph, edge.to);
         const Vector2 start{pan.x + a.x * zoom, pan.y + a.y * zoom};
         const Vector2 end{pan.x + b.x * zoom, pan.y + b.y * zoom};
         if (std::max(start.x, end.x) < 0 || std::min(start.x, end.x) > width ||
@@ -98,7 +121,7 @@ bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
     int hovered = -1;
     const float radius = std::max(3.0f, 12.0f * zoom);
     for (int i = 0; i < static_cast<int>(graph.nodes().size()); ++i) {
-        const Vector2 world = nodePosition(graph.nodes()[i]);
+        const Vector2 world = pointFor(graph, i);
         const Vector2 point{pan.x + world.x * zoom, pan.y + world.y * zoom};
         if (point.x < -radius || point.x > width + radius ||
             point.y < graphTop - radius || point.y > graphBottom + radius) continue;
@@ -113,13 +136,24 @@ bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
     DrawText("STATE GRAPH", 26, 18, 27, RAYWHITE);
     DrawText(TextFormat("%d states  /  %d transitions  /  %s", static_cast<int>(graph.nodes().size()),
                         static_cast<int>(graph.edges().size()), graph.complete() ? "Complete" : "Building..."),
-             26, 59, 19, muted);
-    const bool back = graphButton({805, 20, 267, 42}, "Back to editor", mouse);
-    if (graphButton({695, 20, 98, 42}, "Fit", mouse) || IsKeyPressed(KEY_HOME)) {
+             26, 70, 19, muted);
+    const bool back = graphButton({805, 15, 267, 42}, "Back to editor", mouse);
+    bool layoutChanged = graphButton({355, 15, 330, 42},
+                    mode == LayoutMode::FewerCrossings ? "Layout: fewer crossings" : "Layout: original", mouse) ||
+        IsKeyPressed(KEY_L);
+    if (layoutChanged) {
+        mode = mode == LayoutMode::FewerCrossings ? LayoutMode::Original : LayoutMode::FewerCrossings;
+        positions_ = buildLayout(graph, mode);
+        computedMode_ = mode;
+        lastNodeCount_ = graph.nodes().size();
+        lastEdgeCount_ = graph.edges().size();
+        lastUpdate_ = GetTime();
+    }
+    if (graphButton({695, 15, 98, 42}, "Fit", mouse) || IsKeyPressed(KEY_HOME) || layoutChanged) {
         float maxX = 0;
         float maxY = 0;
-        for (const GraphNode& node : graph.nodes()) {
-            const Vector2 point = nodePosition(node);
+        for (std::size_t i = 0; i < graph.nodes().size(); ++i) {
+            const Vector2 point = pointFor(graph, i);
             maxX = std::max(maxX, point.x);
             maxY = std::max(maxY, std::abs(point.y));
         }
@@ -127,7 +161,7 @@ bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
         pan = {(width - maxX * zoom) / 2.0f, (graphTop + graphBottom) / 2.0f};
     }
     DrawRectangle(0, graphBottom, width, height - graphBottom, Color{29, 38, 52, 255});
-    DrawText("Wheel: zoom    Drag: pan    Home: fit    Red: starting state", 26, graphBottom + 17, 18, muted);
+    DrawText("Wheel: zoom    Drag: pan    Home: fit    L: layout    Red: start", 26, graphBottom + 17, 18, muted);
 
     if (hovered >= 0) drawTooltip(graph, hovered, mouse);
     return back || IsKeyPressed(KEY_ESCAPE);
