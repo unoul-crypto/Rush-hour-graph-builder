@@ -4,7 +4,10 @@
 
 #include <vector>
 
-enum class LayoutMode { FewerCrossings, Original };
+enum class LayoutMode { FewerCrossings, ForceDirected, Original };
+
+LayoutMode nextLayoutMode(LayoutMode mode);
+const char* layoutModeName(LayoutMode mode);
 
 struct LayoutPoint {
     float x = 0;

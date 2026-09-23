@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -61,6 +62,90 @@ int countCrossings(const StateGraph& graph, const std::vector<LayoutPoint>& posi
         }
     }
     return count;
+}
+
+std::vector<LayoutPoint> forceDirectedLayout(const StateGraph& graph,
+                                             std::vector<LayoutPoint> positions) {
+    const int count = static_cast<int>(positions.size());
+    if (count <= 1) return positions;
+
+    // Fruchterman-Reingold forces: each edge attracts its endpoints and every
+    // pair of vertices repels. Sample repulsion for very large graphs.
+    constexpr float ideal = 85.0f;
+    const int iterations = graph.complete() ? (count <= 100 ? 100 : count <= 500 ? 70 : count <= 3000 ? 35 : 16)
+                                            : (count <= 500 ? 12 : 5);
+    float maxRadius = 1.0f;
+    for (const LayoutPoint point : positions)
+        maxRadius = std::max(maxRadius, std::hypot(point.x, point.y));
+    const float initialScale = ideal * std::sqrt(static_cast<float>(count)) / maxRadius;
+    for (int i = 0; i < count; ++i) {
+        positions[i].x = positions[i].x * initialScale + static_cast<float>((i * 37) % 17 - 8);
+        positions[i].y = positions[i].y * initialScale + static_cast<float>((i * 53) % 19 - 9);
+    }
+
+    std::vector<LayoutPoint> displacement(count);
+    auto repel = [&](int i, int j, bool symmetric) {
+        float dx = positions[i].x - positions[j].x;
+        float dy = positions[i].y - positions[j].y;
+        const float distanceSquared = std::max(1.0f, dx * dx + dy * dy);
+        const float force = ideal * ideal / distanceSquared;
+        dx *= force;
+        dy *= force;
+        displacement[i].x += dx;
+        displacement[i].y += dy;
+        if (symmetric) {
+            displacement[j].x -= dx;
+            displacement[j].y -= dy;
+        }
+    };
+    for (int iteration = 0; iteration < iterations; ++iteration) {
+        std::fill(displacement.begin(), displacement.end(), LayoutPoint{});
+        if (count <= 400) {
+            for (int i = 0; i < count; ++i)
+                for (int j = i + 1; j < count; ++j) repel(i, j, true);
+        } else {
+            const int sampleCount = 24;
+            for (int i = 0; i < count; ++i) {
+                for (int sample = 0; sample < sampleCount; ++sample) {
+                    const unsigned int key = static_cast<unsigned int>(i) * 1103515245u +
+                                             static_cast<unsigned int>(sample) * 2654435761u +
+                                             static_cast<unsigned int>(iteration) * 97u;
+                    const int j = static_cast<int>(key % static_cast<unsigned int>(count));
+                    if (j != i) repel(i, j, false);
+                }
+                displacement[i].x *= static_cast<float>(count) / sampleCount;
+                displacement[i].y *= static_cast<float>(count) / sampleCount;
+            }
+        }
+        for (const GraphEdge& edge : graph.edges()) {
+            const float dx = positions[edge.from].x - positions[edge.to].x;
+            const float dy = positions[edge.from].y - positions[edge.to].y;
+            const float distance = std::max(1.0f, std::hypot(dx, dy));
+            const float force = distance / ideal;
+            displacement[edge.from].x -= dx * force;
+            displacement[edge.from].y -= dy * force;
+            displacement[edge.to].x += dx * force;
+            displacement[edge.to].y += dy * force;
+        }
+        const float cooling = 1.0f - static_cast<float>(iteration) / iterations;
+        const float temperature = ideal * (0.05f + 1.15f * cooling * cooling);
+        for (int i = 0; i < count; ++i) {
+            displacement[i].x -= positions[i].x * 0.02f;
+            displacement[i].y -= positions[i].y * 0.02f;
+            const float magnitude = std::hypot(displacement[i].x, displacement[i].y);
+            if (magnitude > 0.001f) {
+                const float scale = std::min(1.0f, temperature / magnitude);
+                positions[i].x += displacement[i].x * scale;
+                positions[i].y += displacement[i].y * scale;
+            }
+        }
+    }
+    const LayoutPoint root = positions[0];
+    for (LayoutPoint& point : positions) {
+        point.x -= root.x;
+        point.y -= root.y;
+    }
+    return positions;
 }
 
 void improveOnPlane(const StateGraph& graph, std::vector<LayoutPoint>& positions,
@@ -228,6 +313,24 @@ int countEdgeIntersections(const StateGraph& graph, const std::vector<LayoutPoin
     return countCrossings(graph, positions);
 }
 
+LayoutMode nextLayoutMode(LayoutMode mode) {
+    switch (mode) {
+    case LayoutMode::FewerCrossings: return LayoutMode::ForceDirected;
+    case LayoutMode::ForceDirected: return LayoutMode::Original;
+    case LayoutMode::Original: return LayoutMode::FewerCrossings;
+    }
+    return LayoutMode::FewerCrossings;
+}
+
+const char* layoutModeName(LayoutMode mode) {
+    switch (mode) {
+    case LayoutMode::FewerCrossings: return "fewer crossings";
+    case LayoutMode::ForceDirected: return "force-directed";
+    case LayoutMode::Original: return "original";
+    }
+    return "unknown";
+}
+
 std::vector<LayoutPoint> buildLayout(const StateGraph& graph, LayoutMode mode) {
     const auto& nodes = graph.nodes();
     std::vector<LayoutPoint> result(nodes.size());
@@ -283,6 +386,11 @@ std::vector<LayoutPoint> buildLayout(const StateGraph& graph, LayoutMode mode) {
     for (int depth = 0; depth <= maxDepth; ++depth) {
         const float center = (static_cast<float>(layers[depth].size()) - 1.0f) / 2.0f;
         for (int id : layers[depth]) result[id] = {depth * layerGap, (rank[id] - center) * nodeGap};
+    }
+    if (mode == LayoutMode::ForceDirected) {
+        result = forceDirectedLayout(graph, std::move(result));
+        improveOnPlane(graph, result, neighbors);
+        return result;
     }
     improveOnPlane(graph, result, neighbors);
     return result;

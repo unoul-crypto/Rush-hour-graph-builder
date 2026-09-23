@@ -180,8 +180,8 @@ int main() {
         DrawText("RUSH HOUR  /  BOARD EDITOR", 48, 36, 30, RAYWHITE);
         DrawText("Create a starting position and build its state graph", 48, 79, 20, muted);
         if (button({static_cast<float>(panelX), 72, 300, 40},
-                   graphView.mode == LayoutMode::FewerCrossings ? "Layout: fewer crossings" : "Layout: original")) {
-            graphView.mode = graphView.mode == LayoutMode::FewerCrossings ? LayoutMode::Original : LayoutMode::FewerCrossings;
+                   TextFormat("Layout: %s", layoutModeName(graphView.mode)))) {
+            graphView.mode = nextLayoutMode(graphView.mode);
         }
         drawBoard(editor);
 

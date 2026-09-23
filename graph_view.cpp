@@ -172,10 +172,10 @@ bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
                  26, 70, 19, muted);
     const bool back = graphButton({805, 15, 267, 42}, "Back to editor", mouse);
     bool layoutChanged = graphButton({355, 15, 330, 42},
-                    mode == LayoutMode::FewerCrossings ? "Layout: fewer crossings" : "Layout: original", mouse) ||
+                    TextFormat("Layout: %s", layoutModeName(mode)), mouse) ||
         IsKeyPressed(KEY_L);
     if (layoutChanged) {
-        mode = mode == LayoutMode::FewerCrossings ? LayoutMode::Original : LayoutMode::FewerCrossings;
+        mode = nextLayoutMode(mode);
         positions_ = buildLayout(graph, mode);
         intersectionCount_ = graph.complete() && graph.edges().size() <= 1600
                                  ? countEdgeIntersections(graph, positions_) : -1;
