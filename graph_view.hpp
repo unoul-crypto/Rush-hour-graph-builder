@@ -22,7 +22,10 @@ private:
     LayoutMode computedMode_ = LayoutMode::Original;
     std::size_t lastNodeCount_ = 0;
     std::size_t lastEdgeCount_ = 0;
+    bool lastComplete_ = false;
     double lastUpdate_ = 0;
+    bool fittedComplete_ = false;
+    int intersectionCount_ = -1;
 
     Vector2 pointFor(const StateGraph& graph, std::size_t node) const;
 };

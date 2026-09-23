@@ -69,7 +69,10 @@ void GraphView::resetForGraph() {
     positions_.clear();
     lastNodeCount_ = 0;
     lastEdgeCount_ = 0;
+    lastComplete_ = false;
     lastUpdate_ = 0;
+    fittedComplete_ = false;
+    intersectionCount_ = -1;
 }
 
 Vector2 GraphView::pointFor(const StateGraph& graph, std::size_t node) const {
@@ -78,13 +81,17 @@ Vector2 GraphView::pointFor(const StateGraph& graph, std::size_t node) const {
 }
 
 bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
-    const bool changed = lastNodeCount_ != graph.nodes().size() || lastEdgeCount_ != graph.edges().size();
+    const bool changed = lastNodeCount_ != graph.nodes().size() ||
+                         lastEdgeCount_ != graph.edges().size() || lastComplete_ != graph.complete();
     if (positions_.empty() || mode != computedMode_ ||
         (changed && (graph.complete() || GetTime() - lastUpdate_ > 0.3))) {
         positions_ = buildLayout(graph, mode);
+        intersectionCount_ = graph.complete() && graph.edges().size() <= 1600
+                                 ? countEdgeIntersections(graph, positions_) : -1;
         computedMode_ = mode;
         lastNodeCount_ = graph.nodes().size();
         lastEdgeCount_ = graph.edges().size();
+        lastComplete_ = graph.complete();
         lastUpdate_ = GetTime();
     }
     const Rectangle area{0, graphTop, width, graphBottom - graphTop};
@@ -92,7 +99,7 @@ bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
     if (overGraph) {
         const float wheel = GetMouseWheelMove();
         if (wheel != 0) {
-            const float nextZoom = std::clamp(zoom * std::pow(1.17f, wheel), 0.03f, 5.0f);
+            const float nextZoom = std::clamp(zoom * std::pow(1.17f, wheel), 0.0001f, 5.0f);
             const Vector2 world{(mouse.x - pan.x) / zoom, (mouse.y - pan.y) / zoom};
             zoom = nextZoom;
             pan = {mouse.x - world.x * zoom, mouse.y - world.y * zoom};
@@ -108,18 +115,39 @@ bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
     }
 
     DrawRectangleRec(area, Color{22, 31, 44, 255});
-    for (const GraphEdge& edge : graph.edges()) {
-        const Vector2 a = pointFor(graph, edge.from);
-        const Vector2 b = pointFor(graph, edge.to);
-        const Vector2 start{pan.x + a.x * zoom, pan.y + a.y * zoom};
-        const Vector2 end{pan.x + b.x * zoom, pan.y + b.y * zoom};
-        if (std::max(start.x, end.x) < 0 || std::min(start.x, end.x) > width ||
-            std::max(start.y, end.y) < graphTop || std::min(start.y, end.y) > graphBottom) continue;
-        DrawLineEx(start, end, std::max(1.0f, zoom), Color{87, 112, 139, 170});
-    }
-
     int hovered = -1;
     const float radius = std::max(3.0f, 12.0f * zoom);
+    float nearestSquared = std::max(radius, 7.0f) * std::max(radius, 7.0f);
+    if (overGraph) {
+        for (int i = 0; i < static_cast<int>(graph.nodes().size()); ++i) {
+            const Vector2 world = pointFor(graph, i);
+            const Vector2 point{pan.x + world.x * zoom, pan.y + world.y * zoom};
+            const float dx = mouse.x - point.x;
+            const float dy = mouse.y - point.y;
+            const float distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared <= nearestSquared) {
+                hovered = i;
+                nearestSquared = distanceSquared;
+            }
+        }
+    }
+
+    for (int pass = 0; pass < (hovered >= 0 ? 2 : 1); ++pass) {
+        for (const GraphEdge& edge : graph.edges()) {
+            const bool highlighted = hovered >= 0 && (edge.from == hovered || edge.to == hovered);
+            if (hovered >= 0 && highlighted != (pass == 1)) continue;
+            const Vector2 a = pointFor(graph, edge.from);
+            const Vector2 b = pointFor(graph, edge.to);
+            const Vector2 start{pan.x + a.x * zoom, pan.y + a.y * zoom};
+            const Vector2 end{pan.x + b.x * zoom, pan.y + b.y * zoom};
+            if (std::max(start.x, end.x) < 0 || std::min(start.x, end.x) > width ||
+                std::max(start.y, end.y) < graphTop || std::min(start.y, end.y) > graphBottom) continue;
+            DrawLineEx(start, end, highlighted ? std::max(2.0f, 2.5f * zoom) : std::max(1.0f, zoom),
+                       highlighted ? Color{255, 199, 112, 245}
+                                   : Color{87, 112, 139, static_cast<unsigned char>(hovered >= 0 ? 35 : 110)});
+        }
+    }
+
     for (int i = 0; i < static_cast<int>(graph.nodes().size()); ++i) {
         const Vector2 world = pointFor(graph, i);
         const Vector2 point{pan.x + world.x * zoom, pan.y + world.y * zoom};
@@ -127,16 +155,21 @@ bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
             point.y < graphTop - radius || point.y > graphBottom + radius) continue;
         const Color fill = i == 0 ? targetColor : accent;
         DrawCircleV(point, radius, fill);
+        if (i == hovered) DrawCircleLines(static_cast<int>(point.x), static_cast<int>(point.y), radius + 4, RAYWHITE);
         if (zoom >= 0.65f) DrawText(TextFormat("%d", i + 1), static_cast<int>(point.x + radius + 3),
                                      static_cast<int>(point.y - 7), 13, muted);
-        if (overGraph && CheckCollisionPointCircle(mouse, point, std::max(radius, 7.0f))) hovered = i;
     }
 
     DrawRectangle(0, 0, width, graphTop, Color{29, 38, 52, 255});
     DrawText("STATE GRAPH", 26, 18, 27, RAYWHITE);
-    DrawText(TextFormat("%d states  /  %d transitions  /  %s", static_cast<int>(graph.nodes().size()),
-                        static_cast<int>(graph.edges().size()), graph.complete() ? "Complete" : "Building..."),
-             26, 70, 19, muted);
+    if (intersectionCount_ >= 0)
+        DrawText(TextFormat("%d states  /  %d transitions  /  %d intersections  /  Complete",
+                            static_cast<int>(graph.nodes().size()), static_cast<int>(graph.edges().size()),
+                            intersectionCount_), 26, 70, 19, muted);
+    else
+        DrawText(TextFormat("%d states  /  %d transitions  /  %s", static_cast<int>(graph.nodes().size()),
+                            static_cast<int>(graph.edges().size()), graph.complete() ? "Complete" : "Building..."),
+                 26, 70, 19, muted);
     const bool back = graphButton({805, 15, 267, 42}, "Back to editor", mouse);
     bool layoutChanged = graphButton({355, 15, 330, 42},
                     mode == LayoutMode::FewerCrossings ? "Layout: fewer crossings" : "Layout: original", mouse) ||
@@ -144,24 +177,36 @@ bool GraphView::draw(const StateGraph& graph, Vector2 mouse) {
     if (layoutChanged) {
         mode = mode == LayoutMode::FewerCrossings ? LayoutMode::Original : LayoutMode::FewerCrossings;
         positions_ = buildLayout(graph, mode);
+        intersectionCount_ = graph.complete() && graph.edges().size() <= 1600
+                                 ? countEdgeIntersections(graph, positions_) : -1;
         computedMode_ = mode;
         lastNodeCount_ = graph.nodes().size();
         lastEdgeCount_ = graph.edges().size();
+        lastComplete_ = graph.complete();
         lastUpdate_ = GetTime();
     }
-    if (graphButton({695, 15, 98, 42}, "Fit", mouse) || IsKeyPressed(KEY_HOME) || layoutChanged) {
-        float maxX = 0;
-        float maxY = 0;
+    const bool fitRequested = graphButton({695, 15, 98, 42}, "Fit", mouse) ||
+                              IsKeyPressed(KEY_HOME) || layoutChanged || (graph.complete() && !fittedComplete_);
+    if (fitRequested) {
+        float minX = positions_.empty() ? 0 : positions_[0].x;
+        float maxX = minX;
+        float minY = positions_.empty() ? 0 : positions_[0].y;
+        float maxY = minY;
         for (std::size_t i = 0; i < graph.nodes().size(); ++i) {
             const Vector2 point = pointFor(graph, i);
+            minX = std::min(minX, point.x);
             maxX = std::max(maxX, point.x);
-            maxY = std::max(maxY, std::abs(point.y));
+            minY = std::min(minY, point.y);
+            maxY = std::max(maxY, point.y);
         }
-        zoom = std::clamp(std::min(1000.0f / (maxX + 80), 580.0f / (2 * maxY + 80)), 0.03f, 5.0f);
-        pan = {(width - maxX * zoom) / 2.0f, (graphTop + graphBottom) / 2.0f};
+        zoom = std::clamp(std::min(1000.0f / (maxX - minX + 80), 580.0f / (maxY - minY + 80)),
+                          0.0001f, 2.5f);
+        pan = {width / 2.0f - (minX + maxX) / 2.0f * zoom,
+               (graphTop + graphBottom) / 2.0f - (minY + maxY) / 2.0f * zoom};
+        if (graph.complete()) fittedComplete_ = true;
     }
     DrawRectangle(0, graphBottom, width, height - graphBottom, Color{29, 38, 52, 255});
-    DrawText("Wheel: zoom    Drag: pan    Home: fit    L: layout    Red: start", 26, graphBottom + 17, 18, muted);
+    DrawText("Wheel: zoom    Drag: pan    Hover: focus edges    Home: fit    L: layout", 26, graphBottom + 17, 18, muted);
 
     if (hovered >= 0) drawTooltip(graph, hovered, mouse);
     return back || IsKeyPressed(KEY_ESCAPE);

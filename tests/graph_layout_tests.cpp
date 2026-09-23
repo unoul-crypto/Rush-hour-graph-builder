@@ -1,30 +1,6 @@
 #include "../graph_layout.hpp"
 
 #include <cassert>
-#include <cmath>
-
-namespace {
-float side(LayoutPoint a, LayoutPoint b, LayoutPoint p) {
-    return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-}
-
-int crossings(const StateGraph& graph, const std::vector<LayoutPoint>& positions) {
-    int total = 0;
-    const auto& edges = graph.edges();
-    for (std::size_t i = 0; i < edges.size(); ++i) {
-        for (std::size_t j = i + 1; j < edges.size(); ++j) {
-            const auto& a = edges[i];
-            const auto& b = edges[j];
-            if (a.from == b.from || a.from == b.to || a.to == b.from || a.to == b.to) continue;
-            const auto p = positions[a.from], q = positions[a.to];
-            const auto r = positions[b.from], s = positions[b.to];
-            if (side(p, q, r) * side(p, q, s) < 0 &&
-                side(r, s, p) * side(r, s, q) < 0) ++total;
-        }
-    }
-    return total;
-}
-}
 
 int main() {
     Board board(3, 3);
@@ -38,12 +14,28 @@ int main() {
     assert(original.size() == graph.nodes().size());
     assert(optimized.size() == graph.nodes().size());
     assert(original[0].x == 0 && original[0].y == 0);
-    for (std::size_t i = 0; i < graph.nodes().size(); ++i) {
-        assert(optimized[i].x == graph.nodes()[i].depth * 185.0f);
-        for (std::size_t j = i + 1; j < graph.nodes().size(); ++j)
-            if (graph.nodes()[i].depth == graph.nodes()[j].depth)
-                assert(optimized[i].y != optimized[j].y);
-    }
-    assert(crossings(graph, optimized) < crossings(graph, original));
+    bool usesPlane = false;
+    for (std::size_t i = 0; i < graph.nodes().size(); ++i)
+        usesPlane |= optimized[i].x != graph.nodes()[i].depth * 185.0f;
+    assert(usesPlane);
+    assert(countEdgeIntersections(graph, optimized) < countEdgeIntersections(graph, original));
+
+    Board threeCars(3, 3);
+    for (int row = 0; row < 3; ++row)
+        assert(threeCars.add({row, 0, 1, Direction::Horizontal, false}));
+    StateGraph larger(threeCars);
+    while (!larger.complete()) larger.step(10);
+    const int oldCrossings = countEdgeIntersections(larger, buildLayout(larger, LayoutMode::Original));
+    const int newCrossings = countEdgeIntersections(larger, buildLayout(larger, LayoutMode::FewerCrossings));
+    assert(newCrossings * 2 < oldCrossings);
+
+    Board fourCars(3, 4);
+    for (int row = 0; row < 4; ++row)
+        assert(fourCars.add({row, 0, 1, Direction::Horizontal, false}));
+    StateGraph biggest(fourCars);
+    while (!biggest.complete()) biggest.step(100);
+    const int fourOld = countEdgeIntersections(biggest, buildLayout(biggest, LayoutMode::Original));
+    const int fourNew = countEdgeIntersections(biggest, buildLayout(biggest, LayoutMode::FewerCrossings));
+    assert(fourNew * 3 < fourOld * 2);
     return 0;
 }
