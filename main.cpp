@@ -1,8 +1,11 @@
 #include "board.hpp"
+#include "graph.hpp"
+#include "graph_view.hpp"
 
 #include "raylib.h"
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 namespace {
@@ -128,28 +131,31 @@ void drawBoard(Editor& editor) {
 int main() {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(windowWidth, windowHeight, "Rush Hour - Board Editor");
+    SetExitKey(KEY_NULL);
     SetWindowMinSize(700, 520);
     SetTargetFPS(60);
     Editor editor;
+    std::unique_ptr<StateGraph> graph;
+    GraphView graphView;
 
     while (!WindowShouldClose()) {
-        if (IsKeyPressed(KEY_H)) editor.direction = Direction::Horizontal;
-        if (IsKeyPressed(KEY_V)) editor.direction = Direction::Vertical;
-        if (IsKeyPressed(KEY_MINUS)) editor.length = std::max(1, editor.length - 1);
-        if (IsKeyPressed(KEY_EQUAL)) editor.length = std::min(Board::maxSize, editor.length + 1);
+        if (!graph && IsKeyPressed(KEY_H)) editor.direction = Direction::Horizontal;
+        if (!graph && IsKeyPressed(KEY_V)) editor.direction = Direction::Vertical;
+        if (!graph && IsKeyPressed(KEY_MINUS)) editor.length = std::max(1, editor.length - 1);
+        if (!graph && IsKeyPressed(KEY_EQUAL)) editor.length = std::min(Board::maxSize, editor.length + 1);
         if (IsKeyPressed(KEY_F11)) {
             if (IsWindowMaximized()) RestoreWindow();
             else MaximizeWindow();
         }
-        if (IsKeyPressed(KEY_T) && editor.board.setTarget(editor.selected)) editor.message = "Target car selected.";
-        if (IsKeyPressed(KEY_DELETE) && editor.selected >= 0) {
+        if (!graph && IsKeyPressed(KEY_T) && editor.board.setTarget(editor.selected)) editor.message = "Target car selected.";
+        if (!graph && IsKeyPressed(KEY_DELETE) && editor.selected >= 0) {
             editor.board.remove(editor.selected);
             editor.selected = -1;
             editor.message = "Car removed.";
         }
-        if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S))
+        if (!graph && IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S))
             editor.message = editor.board.save(savePath) ? "Saved to board.txt." : "Could not save board.txt.";
-        if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_O)) {
+        if (!graph && IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_O)) {
             if (Board::load(savePath, editor.board)) {
                 editor.selected = -1;
                 editor.message = "Loaded board.txt.";
@@ -163,15 +169,19 @@ int main() {
                           (GetScreenHeight() - windowHeight * scale) / 2.0f };
         camera.zoom = scale;
         uiMouse = GetScreenToWorld2D(GetMousePosition(), camera);
+        if (graph && !graph->complete()) graph->step(100);
 
         BeginDrawing();
         ClearBackground(background);
         BeginMode2D(camera);
+        if (graph) {
+            if (graphView.draw(*graph, uiMouse)) graph.reset();
+        } else {
         DrawText("RUSH HOUR  /  BOARD EDITOR", 48, 36, 30, RAYWHITE);
-        DrawText("Create a starting position for the future state graph", 48, 79, 20, muted);
+        DrawText("Create a starting position and build its state graph", 48, 79, 20, muted);
         drawBoard(editor);
 
-        DrawRectangle(panelX - 19, 130, 342, 594, panel);
+        DrawRectangle(panelX - 19, 130, 342, 642, panel);
         DrawText("BOARD SIZE", panelX, 151, 22, RAYWHITE);
         DrawText(TextFormat("Width: %d", editor.board.width()), panelX, 191, 20, muted);
         if (button({panelX + 193.0f, 183, 48, 36}, "-")) changeSize(editor, editor.board.width() - 1, editor.board.height());
@@ -207,9 +217,14 @@ int main() {
                 editor.message = "Loaded board.txt.";
             } else editor.message = "Could not load board.txt.";
         }
+        if (button({static_cast<float>(panelX), 713, 300, 45}, "Build graph")) {
+            graph = std::make_unique<StateGraph>(editor.board);
+            graphView = GraphView{};
+        }
 
         DrawText("Left click: add/select     Right click: remove", 48, 749, 18, muted);
         DrawText(editor.message.c_str(), 48, 783, 18, accent);
+        }
         EndMode2D();
         EndDrawing();
     }
